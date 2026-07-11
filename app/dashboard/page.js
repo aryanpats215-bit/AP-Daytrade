@@ -2,8 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const WS_BASE = API_BASE.replace(/^http/, "ws");
+const API_BASE = "";
 
 function formatCurrency(value) {
   if (value === null || value === undefined || Number.isNaN(value)) return "$0.00";
@@ -41,12 +40,10 @@ export default function Dashboard() {
   const [portfolio, setPortfolio] = useState(null);
   const [watchlist, setWatchlist] = useState([]);
   const [trades, setTrades] = useState([]);
-  const [wsConnected, setWsConnected] = useState(false);
   const [apiReachable, setApiReachable] = useState(true);
   const [flashDirection, setFlashDirection] = useState(null);
 
   const prevPlRef = useRef(null);
-  const wsRef = useRef(null);
   const flashTimeoutRef = useRef(null);
 
   useEffect(() => {
@@ -164,40 +161,6 @@ export default function Dashboard() {
     };
   }, [isAuthenticated, authToken, handleLock]);
 
-  useEffect(() => {
-    if (!isAuthenticated) return;
-
-    let socket;
-    let reconnectTimer;
-
-    const connect = () => {
-      try {
-        socket = new WebSocket(`${WS_BASE}/ws`);
-        wsRef.current = socket;
-
-        socket.onopen = () => setWsConnected(true);
-        socket.onclose = () => {
-          setWsConnected(false);
-          reconnectTimer = setTimeout(connect, 3000);
-        };
-        socket.onerror = () => {
-          setWsConnected(false);
-        };
-        socket.onmessage = () => {};
-      } catch (err) {
-        setWsConnected(false);
-        reconnectTimer = setTimeout(connect, 3000);
-      }
-    };
-
-    connect();
-
-    return () => {
-      clearTimeout(reconnectTimer);
-      if (socket) socket.close();
-    };
-  }, [isAuthenticated]);
-
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen w-full bg-black flex items-center justify-center relative overflow-hidden">
@@ -285,11 +248,11 @@ export default function Dashboard() {
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-[#1d1d1f] bg-white/5">
               <span
                 className={`w-2 h-2 rounded-full ${
-                  wsConnected ? "bg-emerald-400 animate-pulse" : "bg-red-500 animate-pulse"
+                  apiReachable ? "bg-emerald-400 animate-pulse" : "bg-red-500 animate-pulse"
                 }`}
               />
               <span className="text-xs text-neutral-400 font-medium">
-                {wsConnected ? "LIVE" : "OFFLINE"}
+                {apiReachable ? "LIVE" : "OFFLINE"}
               </span>
             </div>
             <button
