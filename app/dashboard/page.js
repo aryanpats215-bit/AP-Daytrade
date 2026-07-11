@@ -1,0 +1,442 @@
+"use client";
+
+import { useState, useEffect, useRef, useCallback } from "react";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const WS_BASE = API_BASE.replace(/^http/, "ws");
+
+function formatCurrency(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "$0.00";
+  return value.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatPercent(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "0.00%";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(2)}%`;
+}
+
+function formatTime(isoString) {
+  if (!isoString) return "--:--:--";
+  try {
+    return new Date(isoString).toLocaleTimeString("en-US", { hour12: false });
+  } catch {
+    return "--:--:--";
+  }
+}
+
+export default function Dashboard() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [passwordInput, setPasswordInput] = useState("");
+  const [authToken, setAuthToken] = useState("");
+  const [authError, setAuthError] = useState(false);
+  const [authErrorMessage, setAuthErrorMessage] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+
+  const [portfolio, setPortfolio] = useState(null);
+  const [watchlist, setWatchlist] = useState([]);
+  const [trades, setTrades] = useState([]);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [apiReachable, setApiReachable] = useState(true);
+  const [flashDirection, setFlashDirection] = useState(null);
+
+  const prevPlRef = useRef(null);
+  const wsRef = useRef(null);
+  const flashTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    const stored = typeof window !== "undefined" ? sessionStorage.getItem("core_ai_token") : null;
+    if (stored) {
+      setAuthToken(stored);
+      setIsAuthenticated(true);
+    }
+  }, []);
+
+  const handleUnlock = useCallback(async (event) => {
+    event.preventDefault();
+    setAuthLoading(true);
+    setAuthError(false);
+    setAuthErrorMessage("");
+    try {
+      let res;
+      try {
+        res = await fetch(`${API_BASE}/api/auth`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: passwordInput }),
+        });
+      } catch (networkErr) {
+        throw new Error(
+          `Can't reach the server at ${API_BASE}. This is usually a mixed-content block (HTTPS page calling an HTTP API) or the backend being down.`
+        );
+      }
+      if (res.status === 401) {
+        throw new Error("Incorrect password.");
+      }
+      if (!res.ok) {
+        throw new Error(`Server returned an unexpected error (HTTP ${res.status}).`);
+      }
+      const data = await res.json();
+      if (data.success) {
+        setAuthToken(data.token);
+        setIsAuthenticated(true);
+        if (typeof window !== "undefined") {
+          sessionStorage.setItem("core_ai_token", data.token);
+        }
+      } else {
+        throw new Error("Incorrect password.");
+      }
+    } catch (err) {
+      setAuthError(true);
+      setAuthErrorMessage(err.message || "Unknown error.");
+      setTimeout(() => setAuthError(false), 600);
+    } finally {
+      setAuthLoading(false);
+      setPasswordInput("");
+    }
+  }, [passwordInput]);
+
+  const handleLock = useCallback(() => {
+    setIsAuthenticated(false);
+    setAuthToken("");
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem("core_ai_token");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated || !authToken) return;
+
+    let cancelled = false;
+
+    const fetchAll = async () => {
+      try {
+        const headers = { "X-Dashboard-Token": authToken };
+        const [portfolioRes, watchlistRes, tradesRes] = await Promise.all([
+          fetch(`${API_BASE}/api/portfolio`, { headers }),
+          fetch(`${API_BASE}/api/watchlist`, { headers }),
+          fetch(`${API_BASE}/api/trades`, { headers }),
+        ]);
+
+        if (portfolioRes.status === 401 || watchlistRes.status === 401 || tradesRes.status === 401) {
+          handleLock();
+          return;
+        }
+
+        if (!portfolioRes.ok || !watchlistRes.ok || !tradesRes.ok) {
+          throw new Error("Non-200 response from server");
+        }
+
+        const portfolioData = await portfolioRes.json();
+        const watchlistData = await watchlistRes.json();
+        const tradesData = await tradesRes.json();
+
+        if (cancelled) return;
+
+        setPortfolio((prev) => {
+          const prevPl = prevPlRef.current;
+          if (prevPl !== null && portfolioData.daily_pl !== prevPl) {
+            setFlashDirection(portfolioData.daily_pl >= prevPl ? "up" : "down");
+            clearTimeout(flashTimeoutRef.current);
+            flashTimeoutRef.current = setTimeout(() => setFlashDirection(null), 500);
+          }
+          prevPlRef.current = portfolioData.daily_pl;
+          return portfolioData;
+        });
+        setWatchlist(watchlistData.watchlist || []);
+        setTrades(tradesData.trades || []);
+        setApiReachable(true);
+      } catch (err) {
+        if (!cancelled) setApiReachable(false);
+      }
+    };
+
+    fetchAll();
+    const interval = setInterval(fetchAll, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isAuthenticated, authToken, handleLock]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    let socket;
+    let reconnectTimer;
+
+    const connect = () => {
+      try {
+        socket = new WebSocket(`${WS_BASE}/ws`);
+        wsRef.current = socket;
+
+        socket.onopen = () => setWsConnected(true);
+        socket.onclose = () => {
+          setWsConnected(false);
+          reconnectTimer = setTimeout(connect, 3000);
+        };
+        socket.onerror = () => {
+          setWsConnected(false);
+        };
+        socket.onmessage = () => {};
+      } catch (err) {
+        setWsConnected(false);
+        reconnectTimer = setTimeout(connect, 3000);
+      }
+    };
+
+    connect();
+
+    return () => {
+      clearTimeout(reconnectTimer);
+      if (socket) socket.close();
+    };
+  }, [isAuthenticated]);
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen w-full bg-black flex items-center justify-center relative overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-black to-slate-950" />
+        <div className="absolute inset-0 backdrop-blur-3xl" />
+
+        <form
+          onSubmit={handleUnlock}
+          className={`relative z-10 w-full max-w-sm mx-4 rounded-3xl border border-[#1d1d1f] bg-white/5 backdrop-blur-2xl p-10 shadow-2xl ${
+            authError ? "animate-shake" : ""
+          }`}
+        >
+          <div className="flex flex-col items-center mb-8">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-neutral-700 to-neutral-900 border border-[#1d1d1f] flex items-center justify-center mb-5">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  d="M12 2L3 7V12C3 16.55 6.84 20.74 12 22C17.16 20.74 21 16.55 21 12V7L12 2Z"
+                  stroke="white"
+                  strokeWidth="1.5"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+            <h1 className="text-white text-2xl font-semibold tracking-tight">CORE-AI Terminal</h1>
+            <p className="text-neutral-500 text-sm mt-1">Enter credentials to access the trading engine</p>
+          </div>
+
+          <input
+            type="password"
+            value={passwordInput}
+            onChange={(e) => setPasswordInput(e.target.value)}
+            placeholder="System Password"
+            autoFocus
+            className="w-full bg-white/5 border border-[#1d1d1f] rounded-xl px-4 py-3.5 text-white placeholder-neutral-600 text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/20 transition-all"
+          />
+
+          <button
+            type="submit"
+            disabled={authLoading}
+            className="w-full mt-4 bg-white text-black font-medium rounded-xl py-3.5 hover:bg-neutral-200 active:scale-[0.98] transition-all disabled:opacity-50"
+          >
+            {authLoading ? "Authenticating..." : "Unlock Terminal"}
+          </button>
+
+          {authError && (
+            <p className="text-red-400 text-xs text-center mt-4 tracking-wide">{authErrorMessage}</p>
+          )}
+        </form>
+
+        <style jsx global>{`
+          @keyframes shake {
+            10%, 90% { transform: translate3d(-1px, 0, 0); }
+            20%, 80% { transform: translate3d(2px, 0, 0); }
+            30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+            40%, 60% { transform: translate3d(4px, 0, 0); }
+          }
+          .animate-shake {
+            animation: shake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+          }
+        `}</style>
+      </div>
+    );
+  }
+
+  const dailyPl = portfolio?.daily_pl ?? 0;
+  const dailyPlPct = portfolio?.daily_pl_pct ?? 0;
+  const isPositive = dailyPl >= 0;
+
+  return (
+    <div className="min-h-screen w-full bg-black text-white">
+      {!apiReachable && (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-red-500/90 backdrop-blur-md text-white text-center text-sm py-2 font-medium">
+          Reconnecting to server...
+        </div>
+      )}
+
+      <nav className="fixed top-0 left-0 right-0 z-40 backdrop-blur-md bg-black/60 border-b border-[#1d1d1f]">
+        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-white font-semibold tracking-tight text-sm md:text-base">
+              CORE-AI // TRADING ENGINE
+            </span>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-[#1d1d1f] bg-white/5">
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  wsConnected ? "bg-emerald-400 animate-pulse" : "bg-red-500 animate-pulse"
+                }`}
+              />
+              <span className="text-xs text-neutral-400 font-medium">
+                {wsConnected ? "LIVE" : "OFFLINE"}
+              </span>
+            </div>
+            <button
+              onClick={handleLock}
+              className="text-xs text-neutral-500 hover:text-white transition-colors"
+            >
+              Lock
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      <main className="max-w-7xl mx-auto px-6 pt-28 pb-16">
+        <section className="mb-12">
+          <p className="text-neutral-500 text-sm mb-2 tracking-wide uppercase">Total Portfolio Value</p>
+          <h1 className="text-6xl md:text-8xl font-semibold tracking-tighter mb-4">
+            {formatCurrency(portfolio?.equity)}
+          </h1>
+          <div
+            className={`inline-flex items-center gap-2 text-xl md:text-2xl font-medium transition-all duration-300 ${
+              isPositive ? "text-emerald-400" : "text-red-500"
+            } ${flashDirection ? "scale-105" : "scale-100"}`}
+            style={{
+              textShadow: isPositive
+                ? "0 0 20px rgba(52, 211, 153, 0.5)"
+                : "0 0 20px rgba(239, 68, 68, 0.5)",
+            }}
+          >
+            <span>{isPositive ? "▲" : "▼"}</span>
+            <span>{formatCurrency(dailyPl)}</span>
+            <span className="text-base md:text-lg opacity-70">({formatPercent(dailyPlPct)})</span>
+          </div>
+          <div className="flex flex-wrap gap-4 mt-6">
+            <div className="px-4 py-2 rounded-xl border border-[#1d1d1f] bg-white/5">
+              <span className="text-neutral-500 text-xs uppercase tracking-wide block">Buying Power</span>
+              <span className="text-white font-medium">{formatCurrency(portfolio?.buying_power)}</span>
+            </div>
+            <div className="px-4 py-2 rounded-xl border border-[#1d1d1f] bg-white/5">
+              <span className="text-neutral-500 text-xs uppercase tracking-wide block">Session</span>
+              <span className="text-white font-medium capitalize">
+                {portfolio?.market_session?.replace("_", " ") || "closed"}
+              </span>
+            </div>
+            <div className="px-4 py-2 rounded-xl border border-[#1d1d1f] bg-white/5">
+              <span className="text-neutral-500 text-xs uppercase tracking-wide block">Trading Status</span>
+              <span className={`font-medium ${portfolio?.trading_locked ? "text-red-500" : "text-emerald-400"}`}>
+                {portfolio?.trading_locked ? "LOCKED (Circuit Breaker)" : portfolio?.trading_enabled ? "ACTIVE" : "IDLE"}
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="rounded-3xl border border-[#1d1d1f] bg-white/[0.03] backdrop-blur-xl p-6 lg:col-span-2">
+            <h2 className="text-neutral-400 text-sm uppercase tracking-wide mb-4 font-medium">
+              Live Positions
+            </h2>
+            {(!portfolio?.positions || portfolio.positions.length === 0) && (
+              <p className="text-neutral-600 text-sm py-8 text-center">No open positions</p>
+            )}
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {portfolio?.positions?.map((p) => {
+                const posPositive = p.unrealized_pl >= 0;
+                return (
+                  <div
+                    key={p.symbol}
+                    className="flex items-center justify-between px-4 py-3 rounded-xl bg-white/5 border border-[#1d1d1f]"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex flex-col">
+                        <span className="font-semibold text-white">{p.symbol}</span>
+                        <span className="text-xs text-neutral-500 capitalize">
+                          {p.asset_class?.replace("_", " ")} · {p.qty} {p.side}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className={`font-medium ${posPositive ? "text-emerald-400" : "text-red-500"}`}>
+                        {formatCurrency(p.unrealized_pl)}
+                      </div>
+                      <div className="text-xs text-neutral-500">{formatPercent(p.unrealized_plpc)}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-[#1d1d1f] bg-white/[0.03] backdrop-blur-xl p-6">
+            <h2 className="text-neutral-400 text-sm uppercase tracking-wide mb-4 font-medium">
+              Execution Log
+            </h2>
+            <div className="space-y-1 max-h-96 overflow-y-auto font-mono text-xs">
+              {trades.length === 0 && (
+                <p className="text-neutral-600 text-sm py-8 text-center font-sans">No trades executed yet</p>
+              )}
+              {trades.map((t, idx) => (
+                <div
+                  key={`${t.timestamp}-${idx}`}
+                  className="flex items-start gap-2 py-2 border-b border-[#1d1d1f] last:border-0"
+                >
+                  <span className="text-neutral-600 shrink-0">{formatTime(t.timestamp)}</span>
+                  <span
+                    className={`shrink-0 font-semibold ${
+                      t.event?.includes("BUY")
+                        ? "text-emerald-400"
+                        : t.event?.includes("SELL") || t.event?.includes("CIRCUIT")
+                        ? "text-red-500"
+                        : "text-neutral-400"
+                    }`}
+                  >
+                    {t.event}
+                  </span>
+                  {t.symbol && <span className="text-white shrink-0">{t.symbol}</span>}
+                  <span className="text-neutral-600 truncate">{t.detail}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-[#1d1d1f] bg-white/[0.03] backdrop-blur-xl p-6">
+            <h2 className="text-neutral-400 text-sm uppercase tracking-wide mb-4 font-medium">
+              Trump Sentiment Watchlist
+            </h2>
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {watchlist.length === 0 && (
+                <p className="text-neutral-600 text-sm py-8 text-center">No active signals</p>
+              )}
+              {watchlist.map((w, idx) => (
+                <div
+                  key={`${w.symbol}-${w.timestamp}-${idx}`}
+                  className="flex flex-col gap-1 px-4 py-3 rounded-xl bg-white/5 border border-[#1d1d1f]"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-white">{w.symbol}</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                      P{w.priority}
+                    </span>
+                  </div>
+                  <p className="text-neutral-400 text-xs leading-snug">{w.headline}</p>
+                  <span className="text-neutral-600 text-xs">{formatTime(w.timestamp)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
