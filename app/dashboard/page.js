@@ -184,7 +184,7 @@ export default function Dashboard() {
                 />
               </svg>
             </div>
-            <h1 className="text-white text-2xl font-semibold tracking-tight">CORE-AI Terminal</h1>
+            <h1 className="text-white text-2xl font-semibold tracking-tight">AP Daytrade Terminal</h1>
             <p className="text-neutral-500 text-sm mt-1">Enter credentials to access the trading engine</p>
           </div>
 
@@ -241,7 +241,7 @@ export default function Dashboard() {
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-white font-semibold tracking-tight text-sm md:text-base">
-              CORE-AI // TRADING ENGINE
+              AP DAYTRADE
             </span>
           </div>
           <div className="flex items-center gap-4">

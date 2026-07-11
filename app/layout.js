@@ -1,7 +1,7 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "CORE-AI // Trading Engine",
+  title: "AP Daytrade",
   description: "Autonomous multi-asset trading terminal",
 };
 
