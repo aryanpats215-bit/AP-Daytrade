@@ -43,8 +43,17 @@ export default function Dashboard() {
   const [apiReachable, setApiReachable] = useState(true);
   const [flashDirection, setFlashDirection] = useState(null);
 
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [selectedQuote, setSelectedQuote] = useState(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [quoteError, setQuoteError] = useState("");
+
   const prevPlRef = useRef(null);
   const flashTimeoutRef = useRef(null);
+  const searchDebounceRef = useRef(null);
+  const suppressNextSearchRef = useRef(false);
 
   useEffect(() => {
     const stored = typeof window !== "undefined" ? sessionStorage.getItem("core_ai_token") : null;
@@ -160,6 +169,72 @@ export default function Dashboard() {
       clearInterval(interval);
     };
   }, [isAuthenticated, authToken, handleLock]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !authToken) return;
+
+    clearTimeout(searchDebounceRef.current);
+
+    if (suppressNextSearchRef.current) {
+      suppressNextSearchRef.current = false;
+      setSearchResults([]);
+      setSearchLoading(false);
+      return;
+    }
+
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      setSearchLoading(false);
+      return;
+    }
+
+    setSearchLoading(true);
+    searchDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/search?q=${encodeURIComponent(searchQuery.trim())}`,
+          { headers: { "X-Dashboard-Token": authToken } }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          setSearchResults(data.results || []);
+        }
+      } catch (err) {
+        setSearchResults([]);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(searchDebounceRef.current);
+  }, [searchQuery, isAuthenticated, authToken]);
+
+  const handleSelectSymbol = useCallback(
+    async (symbol) => {
+      suppressNextSearchRef.current = true;
+      setSearchResults([]);
+      setSearchQuery(symbol);
+      setQuoteLoading(true);
+      setQuoteError("");
+      try {
+        const res = await fetch(`${API_BASE}/api/quote?symbol=${encodeURIComponent(symbol)}`, {
+          headers: { "X-Dashboard-Token": authToken },
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.detail || `Couldn't fetch a quote for ${symbol}.`);
+        }
+        const data = await res.json();
+        setSelectedQuote(data);
+      } catch (err) {
+        setQuoteError(err.message || "Couldn't fetch that quote.");
+        setSelectedQuote(null);
+      } finally {
+        setQuoteLoading(false);
+      }
+    },
+    [authToken]
+  );
 
   if (!isAuthenticated) {
     return (
@@ -306,6 +381,69 @@ export default function Dashboard() {
         </section>
 
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="rounded-3xl border border-[#1d1d1f] bg-white/[0.03] backdrop-blur-xl p-6 lg:col-span-2 relative">
+            <h2 className="text-neutral-400 text-sm uppercase tracking-wide mb-4 font-medium">
+              Stock Search
+            </h2>
+            <div className="relative">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by ticker or company name (e.g. AAPL, Tesla)"
+                className="w-full bg-white/5 border border-[#1d1d1f] rounded-xl px-4 py-3 text-white placeholder-neutral-600 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/20 transition-all"
+              />
+              {searchResults.length > 0 && (
+                <div className="absolute z-20 mt-2 w-full max-h-72 overflow-y-auto rounded-xl border border-[#1d1d1f] bg-black/95 backdrop-blur-xl shadow-2xl">
+                  {searchResults.map((r) => (
+                    <button
+                      key={r.symbol}
+                      onClick={() => handleSelectSymbol(r.symbol)}
+                      className="w-full text-left px-4 py-2.5 hover:bg-white/5 transition-colors flex items-center justify-between gap-3"
+                    >
+                      <span className="font-semibold text-white">{r.symbol}</span>
+                      <span className="text-xs text-neutral-500 truncate">{r.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {quoteLoading && (
+              <p className="text-neutral-500 text-sm mt-4">Fetching quote...</p>
+            )}
+
+            {quoteError && !quoteLoading && (
+              <p className="text-red-400 text-sm mt-4">{quoteError}</p>
+            )}
+
+            {selectedQuote && !quoteLoading && !quoteError && (
+              <div className="mt-5 flex flex-wrap items-baseline gap-x-4 gap-y-2 px-4 py-4 rounded-xl bg-white/5 border border-[#1d1d1f]">
+                <div className="flex flex-col mr-auto">
+                  <span className="text-white font-semibold text-lg">{selectedQuote.symbol}</span>
+                  <span className="text-neutral-500 text-xs">{selectedQuote.name}</span>
+                </div>
+                <span className="text-white text-2xl font-semibold">
+                  {formatCurrency(selectedQuote.price)}
+                </span>
+                <span
+                  className={`text-sm font-medium ${
+                    selectedQuote.change >= 0 ? "text-emerald-400" : "text-red-500"
+                  }`}
+                >
+                  {selectedQuote.change >= 0 ? "+" : ""}
+                  {formatCurrency(selectedQuote.change)} ({formatPercent(selectedQuote.change_pct)})
+                </span>
+                <div className="w-full flex flex-wrap gap-4 mt-2 text-xs text-neutral-500">
+                  <span>Day high: {formatCurrency(selectedQuote.day_high)}</span>
+                  <span>Day low: {formatCurrency(selectedQuote.day_low)}</span>
+                  <span>Prev close: {formatCurrency(selectedQuote.previous_close)}</span>
+                  <span>Volume: {Math.round(selectedQuote.volume).toLocaleString()}</span>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="rounded-3xl border border-[#1d1d1f] bg-white/[0.03] backdrop-blur-xl p-6 lg:col-span-2">
             <h2 className="text-neutral-400 text-sm uppercase tracking-wide mb-4 font-medium">
               Live Positions
