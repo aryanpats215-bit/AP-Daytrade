@@ -373,8 +373,8 @@ export default function Dashboard() {
             </div>
             <div className="px-4 py-2 rounded-xl border border-[#1d1d1f] bg-white/5">
               <span className="text-neutral-500 text-xs uppercase tracking-wide block">Trading Status</span>
-              <span className={`font-medium ${portfolio?.trading_locked ? "text-red-500" : "text-emerald-400"}`}>
-                {portfolio?.trading_locked ? "LOCKED (Circuit Breaker)" : portfolio?.trading_enabled ? "ACTIVE" : "IDLE"}
+              <span className={`font-medium ${portfolio?.trading_enabled ? "text-emerald-400" : "text-neutral-400"}`}>
+                {portfolio?.trading_enabled ? "ACTIVE" : "IDLE"}
               </span>
             </div>
           </div>
