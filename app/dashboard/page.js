@@ -40,6 +40,7 @@ export default function Dashboard() {
   const [portfolio, setPortfolio] = useState(null);
   const [watchlist, setWatchlist] = useState([]);
   const [trades, setTrades] = useState([]);
+  const [analytics, setAnalytics] = useState(null);
   const [apiReachable, setApiReachable] = useState(true);
   const [flashDirection, setFlashDirection] = useState(null);
 
@@ -64,7 +65,7 @@ export default function Dashboard() {
   }, []);
 
   const handleUnlock = useCallback(async (event) => {
-    event.preventDefault();
+    event?.preventDefault();
     setAuthLoading(true);
     setAuthError(false);
     setAuthErrorMessage("");
@@ -107,6 +108,36 @@ export default function Dashboard() {
     }
   }, [passwordInput]);
 
+  const handleKeypadDigit = useCallback((digit) => {
+    setAuthError(false);
+    setPasswordInput((prev) => (prev.length < 12 ? prev + digit : prev));
+  }, []);
+
+  const handleKeypadBackspace = useCallback(() => {
+    setAuthError(false);
+    setPasswordInput((prev) => prev.slice(0, -1));
+  }, []);
+
+  const handleKeypadClear = useCallback(() => {
+    setAuthError(false);
+    setPasswordInput("");
+  }, []);
+
+  useEffect(() => {
+    if (isAuthenticated) return;
+    const onKeyDown = (e) => {
+      if (e.key >= "0" && e.key <= "9") {
+        handleKeypadDigit(e.key);
+      } else if (e.key === "Backspace") {
+        handleKeypadBackspace();
+      } else if (e.key === "Enter") {
+        handleUnlock();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isAuthenticated, handleKeypadDigit, handleKeypadBackspace, handleUnlock]);
+
   const handleLock = useCallback(() => {
     setIsAuthenticated(false);
     setAuthToken("");
@@ -123,24 +154,31 @@ export default function Dashboard() {
     const fetchAll = async () => {
       try {
         const headers = { "X-Dashboard-Token": authToken };
-        const [portfolioRes, watchlistRes, tradesRes] = await Promise.all([
+        const [portfolioRes, watchlistRes, tradesRes, analyticsRes] = await Promise.all([
           fetch(`${API_BASE}/api/portfolio`, { headers }),
           fetch(`${API_BASE}/api/watchlist`, { headers }),
           fetch(`${API_BASE}/api/trades`, { headers }),
+          fetch(`${API_BASE}/api/analytics`, { headers }),
         ]);
 
-        if (portfolioRes.status === 401 || watchlistRes.status === 401 || tradesRes.status === 401) {
+        if (
+          portfolioRes.status === 401 ||
+          watchlistRes.status === 401 ||
+          tradesRes.status === 401 ||
+          analyticsRes.status === 401
+        ) {
           handleLock();
           return;
         }
 
-        if (!portfolioRes.ok || !watchlistRes.ok || !tradesRes.ok) {
+        if (!portfolioRes.ok || !watchlistRes.ok || !tradesRes.ok || !analyticsRes.ok) {
           throw new Error("Non-200 response from server");
         }
 
         const portfolioData = await portfolioRes.json();
         const watchlistData = await watchlistRes.json();
         const tradesData = await tradesRes.json();
+        const analyticsData = await analyticsRes.json();
 
         if (cancelled) return;
 
@@ -156,6 +194,7 @@ export default function Dashboard() {
         });
         setWatchlist(watchlistData.watchlist || []);
         setTrades(tradesData.trades || []);
+        setAnalytics(analyticsData);
         setApiReachable(true);
       } catch (err) {
         if (!cancelled) setApiReachable(false);
@@ -263,18 +302,54 @@ export default function Dashboard() {
             <p className="text-neutral-500 text-sm mt-1">Enter credentials to access the trading engine</p>
           </div>
 
-          <input
-            type="password"
-            value={passwordInput}
-            onChange={(e) => setPasswordInput(e.target.value)}
-            placeholder="System Password"
-            autoFocus
-            className="w-full bg-white/5 border border-[#1d1d1f] rounded-xl px-4 py-3.5 text-white placeholder-neutral-600 text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/20 transition-all"
-          />
+          <div className="flex items-center justify-center gap-3 mb-6 min-h-[20px]">
+            {passwordInput.length === 0 ? (
+              <span className="text-neutral-700 text-xs tracking-wide">Enter PIN</span>
+            ) : (
+              Array.from({ length: passwordInput.length }).map((_, i) => (
+                <span key={i} className="w-2.5 h-2.5 rounded-full bg-white" />
+              ))
+            )}
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((digit) => (
+              <button
+                key={digit}
+                type="button"
+                onClick={() => handleKeypadDigit(digit)}
+                className="aspect-square rounded-2xl bg-white/5 border border-[#1d1d1f] text-white text-xl font-medium hover:bg-white/10 active:scale-95 transition-all"
+              >
+                {digit}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={handleKeypadClear}
+              className="aspect-square rounded-2xl bg-white/5 border border-[#1d1d1f] text-neutral-400 text-xs font-medium hover:bg-white/10 active:scale-95 transition-all"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              onClick={() => handleKeypadDigit("0")}
+              className="aspect-square rounded-2xl bg-white/5 border border-[#1d1d1f] text-white text-xl font-medium hover:bg-white/10 active:scale-95 transition-all"
+            >
+              0
+            </button>
+            <button
+              type="button"
+              onClick={handleKeypadBackspace}
+              aria-label="Backspace"
+              className="aspect-square rounded-2xl bg-white/5 border border-[#1d1d1f] text-neutral-400 text-xl font-medium hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center"
+            >
+              ⌫
+            </button>
+          </div>
 
           <button
             type="submit"
-            disabled={authLoading}
+            disabled={authLoading || passwordInput.length === 0}
             className="w-full mt-4 bg-white text-black font-medium rounded-xl py-3.5 hover:bg-neutral-200 active:scale-[0.98] transition-all disabled:opacity-50"
           >
             {authLoading ? "Authenticating..." : "Unlock Terminal"}
@@ -541,6 +616,70 @@ export default function Dashboard() {
                 </div>
               ))}
             </div>
+          </div>
+
+          <div className="rounded-3xl border border-[#1d1d1f] bg-white/[0.03] backdrop-blur-xl p-6 lg:col-span-2">
+            <h2 className="text-neutral-400 text-sm uppercase tracking-wide mb-4 font-medium">
+              Performance Analytics
+            </h2>
+            {(!analytics || analytics.total_closed_trades === 0) && (
+              <p className="text-neutral-600 text-sm py-8 text-center">No closed trades yet</p>
+            )}
+            {analytics && analytics.total_closed_trades > 0 && (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+                  <div className="px-4 py-3 rounded-xl bg-white/5 border border-[#1d1d1f]">
+                    <span className="text-neutral-500 text-xs uppercase tracking-wide block">Closed Trades</span>
+                    <span className="text-white font-semibold text-lg">{analytics.total_closed_trades}</span>
+                  </div>
+                  <div className="px-4 py-3 rounded-xl bg-white/5 border border-[#1d1d1f]">
+                    <span className="text-neutral-500 text-xs uppercase tracking-wide block">Win Rate</span>
+                    <span className="text-white font-semibold text-lg">{analytics.win_rate_pct.toFixed(1)}%</span>
+                  </div>
+                  <div className="px-4 py-3 rounded-xl bg-white/5 border border-[#1d1d1f]">
+                    <span className="text-neutral-500 text-xs uppercase tracking-wide block">Avg Win</span>
+                    <span className="text-emerald-400 font-semibold text-lg">
+                      {formatPercent(analytics.avg_win_pct)}
+                    </span>
+                  </div>
+                  <div className="px-4 py-3 rounded-xl bg-white/5 border border-[#1d1d1f]">
+                    <span className="text-neutral-500 text-xs uppercase tracking-wide block">Avg Loss</span>
+                    <span className="text-red-500 font-semibold text-lg">
+                      {formatPercent(analytics.avg_loss_pct)}
+                    </span>
+                  </div>
+                  <div className="px-4 py-3 rounded-xl bg-white/5 border border-[#1d1d1f]">
+                    <span className="text-neutral-500 text-xs uppercase tracking-wide block">Total P&L</span>
+                    <span
+                      className={`font-semibold text-lg ${
+                        analytics.total_realized_pnl_pct >= 0 ? "text-emerald-400" : "text-red-500"
+                      }`}
+                    >
+                      {formatPercent(analytics.total_realized_pnl_pct)}
+                    </span>
+                  </div>
+                </div>
+
+                <p className="text-neutral-500 text-xs uppercase tracking-wide mb-2">By Signal</p>
+                <div className="space-y-1">
+                  {Object.entries(analytics.by_signal).map(([signal, stats]) => (
+                    <div
+                      key={signal}
+                      className="flex items-center justify-between px-4 py-2 rounded-xl bg-white/5 border border-[#1d1d1f] text-xs"
+                    >
+                      <span className="text-neutral-300 font-mono">{signal}</span>
+                      <div className="flex items-center gap-4">
+                        <span className="text-neutral-500">{stats.trades} trades</span>
+                        <span className="text-neutral-500">{stats.win_rate_pct.toFixed(1)}% win</span>
+                        <span className={stats.avg_pnl_pct >= 0 ? "text-emerald-400" : "text-red-500"}>
+                          {formatPercent(stats.avg_pnl_pct)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </section>
       </main>
