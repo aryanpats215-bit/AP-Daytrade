@@ -366,15 +366,21 @@ export default function Dashboard() {
               <span className="text-white font-medium">{formatCurrency(portfolio?.buying_power)}</span>
             </div>
             <div className="px-4 py-2 rounded-xl border border-[#1d1d1f] bg-white/5">
-              <span className="text-neutral-500 text-xs uppercase tracking-wide block">Session</span>
+              <span className="text-neutral-500 text-xs uppercase tracking-wide block">Equities Session</span>
               <span className="text-white font-medium capitalize">
                 {portfolio?.market_session?.replace("_", " ") || "closed"}
               </span>
             </div>
             <div className="px-4 py-2 rounded-xl border border-[#1d1d1f] bg-white/5">
-              <span className="text-neutral-500 text-xs uppercase tracking-wide block">Trading Status</span>
+              <span className="text-neutral-500 text-xs uppercase tracking-wide block">Equities Trading</span>
               <span className={`font-medium ${portfolio?.trading_enabled ? "text-emerald-400" : "text-neutral-400"}`}>
-                {portfolio?.trading_enabled ? "ACTIVE" : "IDLE"}
+                {portfolio?.trading_enabled ? "ACTIVE" : "IDLE (market closed)"}
+              </span>
+            </div>
+            <div className="px-4 py-2 rounded-xl border border-[#1d1d1f] bg-white/5">
+              <span className="text-neutral-500 text-xs uppercase tracking-wide block">Crypto Trading</span>
+              <span className={`font-medium ${portfolio?.crypto_trading_enabled ? "text-emerald-400" : "text-neutral-400"}`}>
+                {portfolio?.crypto_trading_enabled ? "ACTIVE 24/7" : "OFFLINE"}
               </span>
             </div>
           </div>
