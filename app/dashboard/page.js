@@ -627,10 +627,16 @@ export default function Dashboard() {
             )}
             {analytics && analytics.total_closed_trades > 0 && (
               <>
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-5">
                   <div className="px-4 py-3 rounded-xl bg-white/5 border border-[#1d1d1f]">
                     <span className="text-neutral-500 text-xs uppercase tracking-wide block">Closed Trades</span>
                     <span className="text-white font-semibold text-lg">{analytics.total_closed_trades}</span>
+                  </div>
+                  <div className="px-4 py-3 rounded-xl bg-white/5 border border-[#1d1d1f]">
+                    <span className="text-neutral-500 text-xs uppercase tracking-wide block">Avg Confidence</span>
+                    <span className="text-white font-semibold text-lg">
+                      {analytics.avg_entry_confidence_pct.toFixed(1)}%
+                    </span>
                   </div>
                   <div className="px-4 py-3 rounded-xl bg-white/5 border border-[#1d1d1f]">
                     <span className="text-neutral-500 text-xs uppercase tracking-wide block">Win Rate</span>
